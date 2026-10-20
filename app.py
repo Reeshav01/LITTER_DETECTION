@@ -1,3 +1,4 @@
+import requests
 import threading, time
 import cv2, subprocess
 import gradio as gr
@@ -73,6 +74,12 @@ def live_stream(url, conf):
             yield r.plot()[:, :, ::-1], f"Litter: {len(r.boxes)}"
     finally:
         stop["flag"] = True
+def read_sensors(esp_ip):
+    try:
+        d = requests.get(f"http://{esp_ip}/data", timeout=2).json()
+        return d.get("temperature"), d.get("humidity"), d.get("distance_cm"), "Connected"
+    except Exception:
+        return None, None, None, "Not connected"
 with gr.Blocks(title="Litter Detection") as app:
     gr.Markdown("# Litter Detection\nUpload a photo or video and the model marks the litter.")
     conf = gr.Slider(0.1, 0.9, value=0.25, label="Confidence (higher = fewer false alarms)")
@@ -95,5 +102,14 @@ with gr.Blocks(title="Litter Detection") as app:
         stop_btn = gr.Button("Stop")
         ev = start.click(live_stream, [url, conf], [live_img, live_txt])
         stop_btn.click(None, None, None, cancels=[ev])
+    with gr.Tab("Sensors"):
+        gr.Markdown("Live readings from the ESP32 sensor node (DHT22 + ultrasonic) over WiFi.")
+        esp_ip = gr.Textbox(label="ESP32 address (shown in the Arduino serial monitor)", value="192.168.1.50")
+        temp = gr.Number(label="Temperature (°C)")
+        hum = gr.Number(label="Humidity (%)")
+        dist = gr.Number(label="Height above ground (cm)")
+        status = gr.Textbox(label="Status")
+        timer = gr.Timer(1)
+        timer.tick(read_sensors, esp_ip, [temp, hum, dist, status])
 
 app.launch()
