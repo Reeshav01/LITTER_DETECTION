@@ -1,0 +1,108 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <DHT.h>
+
+const char* ssid = "Glitch";
+const char* password = "111111111";
+
+#define DHTPIN 4
+#define DHTTYPE DHT22
+#define TRIGPIN 5
+#define ECHOPIN 18
+
+DHT dht(DHTPIN, DHTTYPE);
+WebServer server(80);
+
+float getDistance() {
+  digitalWrite(TRIGPIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIGPIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIGPIN, LOW);
+  long duration = pulseIn(ECHOPIN, HIGH, 30000);
+  if (duration == 0) return -1;
+  return duration * 0.034 / 2;
+}
+
+const char webpage[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESP32 Sensor Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; background: #eef4f8; padding: 30px; }
+    .card { background: white; padding: 25px; margin: 20px auto; max-width: 350px; border-radius: 16px; }
+    .value { font-size: 32px; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>ESP32 Live Sensor Data</h1>
+  <div class="card"><h2>Temperature</h2><div class="value" id="temp">Loading...</div></div>
+  <div class="card"><h2>Humidity</h2><div class="value" id="hum">Loading...</div></div>
+  <div class="card"><h2>Distance</h2><div class="value" id="dist">Loading...</div></div>
+  <p id="status">Connecting...</p>
+  <script>
+    async function updateData() {
+      try {
+        const response = await fetch('/data');
+        const data = await response.json();
+        document.getElementById('temp').textContent = data.temperature + ' °C';
+        document.getElementById('hum').textContent = data.humidity + ' %';
+        document.getElementById('dist').textContent = data.distance_cm + ' cm';
+        document.getElementById('status').textContent = 'Connected • Refreshing every 2 seconds';
+      } catch (error) {
+        document.getElementById('status').textContent = 'Waiting for sensor data...';
+      }
+    }
+    updateData();
+    setInterval(updateData, 2000);
+  </script>
+</body>
+</html>
+)rawliteral";
+
+void setup() {
+  Serial.begin(115200);
+  dht.begin();
+  pinMode(TRIGPIN, OUTPUT);
+  pinMode(ECHOPIN, INPUT);
+
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to Wi-Fi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWi-Fi connected!");
+  Serial.print("Open this address in your browser: http://");
+  Serial.println(WiFi.localIP());
+
+  server.on("/", HTTP_GET, []() {
+    server.send(200, "text/html", webpage);
+  });
+
+  server.on("/data", HTTP_GET, []() {
+    float temperature = dht.readTemperature();
+    float humidity = dht.readHumidity();
+    float distance = getDistance();
+
+    if (isnan(temperature) || isnan(humidity)) {
+      server.send(503, "application/json", "{\"error\":\"DHT22 read failed\"}");
+      return;
+    }
+
+    String json = "{\"temperature\":" + String(temperature, 1)
+                + ",\"humidity\":" + String(humidity, 1)
+                + ",\"distance_cm\":" + String(distance, 1) + "}";
+
+    server.send(200, "application/json", json);
+  });
+
+  server.begin();
+  Serial.println("Web server started!");
+}
+
+void loop() {
+  server.handleClient();
+}
